@@ -1,0 +1,58 @@
+{
+  "name": "vscode-command-cli",
+  "displayName": "VS Code Command CLI",
+  "description": "Trigger VS Code commands from an external terminal through a lightweight localhost HTTP bridge.",
+  "version": "0.0.1",
+  "publisher": "local-dev",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscodeCommandCli.restartServer",
+        "title": "VS Code Command CLI: Restart Server"
+      },
+      {
+        "command": "vscodeCommandCli.showServerInfo",
+        "title": "VS Code Command CLI: Show Server Info"
+      }
+    ],
+    "configuration": {
+      "title": "VS Code Command CLI",
+      "properties": {
+        "vscodeCommandCli.serverPort": {
+          "type": "number",
+          "default": 3005,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Localhost port used by the command execution HTTP server."
+        },
+        "vscodeCommandCli.enableLog": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write request and server lifecycle logs to the VS Code Command CLI output channel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && vsce package",
+    "lint": "tsc --noEmit -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^2.32.0",
+    "typescript": "^5.4.5"
+  }
+}

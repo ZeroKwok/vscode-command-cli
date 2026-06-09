@@ -1,0 +1,7 @@
+.vscode/**
+src/**
+node_modules/**
+.gitignore
+tsconfig.json
+需求文档 (PRD).md
+*.map
