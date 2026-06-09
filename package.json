@@ -2,8 +2,8 @@
   "name": "vscode-command-cli",
   "displayName": "VS Code Command CLI",
   "description": "Trigger VS Code commands from an external terminal through a lightweight localhost HTTP bridge.",
-  "version": "0.0.1",
-  "publisher": "local-dev",
+  "version": "0.0.2",
+  "publisher": "zero",
   "license": "MIT",
   "private": true,
   "keywords": [
