@@ -1,7 +1,9 @@
 .vscode/**
 src/**
 node_modules/**
+doc/**
 .gitignore
 tsconfig.json
 需求文档 (PRD).md
-*.map
+out/**/*.map
+*.vsix

@@ -4,12 +4,16 @@ import * as vscode from 'vscode';
 
 const CONFIG_SECTION = 'vscodeCommandCli';
 const HOST = '127.0.0.1';
+const PORT_ENV = 'VSCODE_COMMAND_CLI_PORT';
+const URL_ENV = 'VSCODE_COMMAND_CLI_URL';
 
 let server: http.Server | undefined;
 let output: vscode.OutputChannel;
 let currentPort: number | undefined;
+let extensionContext: vscode.ExtensionContext;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  extensionContext = context;
   output = vscode.window.createOutputChannel('VS Code Command CLI');
   context.subscriptions.push(output);
 
@@ -49,7 +53,7 @@ async function restartServer(): Promise<void> {
 
 async function startServer(): Promise<void> {
   const port = getPort();
-  currentPort = port;
+  currentPort = undefined;
 
   server = http.createServer((request, response) => {
     void handleRequest(request, response);
@@ -68,6 +72,8 @@ async function startServer(): Promise<void> {
     return;
   }
 
+  currentPort = getListeningPort(server) ?? port;
+  updateTerminalEnvironment();
   log(`Server started at ${serverUrl()}`);
 
   server.on('error', (error: NodeJS.ErrnoException) => {
@@ -80,6 +86,8 @@ async function startServer(): Promise<void> {
 async function stopServer(): Promise<void> {
   const serverToClose = server;
   server = undefined;
+  currentPort = undefined;
+  clearTerminalEnvironment();
 
   if (!serverToClose) {
     return;
@@ -145,10 +153,10 @@ async function handleExecute(
 }
 
 function getPort(): number {
-  const configuredPort = vscode.workspace.getConfiguration(CONFIG_SECTION).get<number>('serverPort', 3005);
+  const configuredPort = vscode.workspace.getConfiguration(CONFIG_SECTION).get<number>('serverPort', 0);
 
-  if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 65535) {
-    return 3005;
+  if (!Number.isInteger(configuredPort) || configuredPort < 0 || configuredPort > 65535) {
+    return 0;
   }
 
   return configuredPort;
@@ -156,6 +164,32 @@ function getPort(): number {
 
 function serverUrl(): string {
   return `http://${HOST}:${currentPort ?? getPort()}`;
+}
+
+function getListeningPort(activeServer: http.Server): number | undefined {
+  const address = activeServer.address();
+
+  if (address && typeof address === 'object') {
+    return address.port;
+  }
+
+  return undefined;
+}
+
+function updateTerminalEnvironment(): void {
+  if (!currentPort) {
+    return;
+  }
+
+  extensionContext.environmentVariableCollection.replace(PORT_ENV, String(currentPort));
+  extensionContext.environmentVariableCollection.replace(URL_ENV, serverUrl());
+  extensionContext.environmentVariableCollection.description = 'Exposes the VS Code Command CLI localhost server for newly created terminals.';
+  log(`Terminal environment updated: ${PORT_ENV}=${currentPort}, ${URL_ENV}=${serverUrl()}`);
+}
+
+function clearTerminalEnvironment(): void {
+  extensionContext.environmentVariableCollection.delete(PORT_ENV);
+  extensionContext.environmentVariableCollection.delete(URL_ENV);
 }
 
 function getServerErrorMessage(error: unknown, port: number): string {

@@ -4,6 +4,14 @@
   "description": "Trigger VS Code commands from an external terminal through a lightweight localhost HTTP bridge.",
   "version": "0.0.1",
   "publisher": "local-dev",
+  "license": "MIT",
+  "private": true,
+  "keywords": [
+    "vscode",
+    "command",
+    "cli",
+    "localhost"
+  ],
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -30,10 +38,10 @@
       "properties": {
         "vscodeCommandCli.serverPort": {
           "type": "number",
-          "default": 3005,
-          "minimum": 1,
+          "default": 0,
+          "minimum": 0,
           "maximum": 65535,
-          "description": "Localhost port used by the command execution HTTP server."
+          "description": "Localhost port used by the command execution HTTP server. Use 0 to let the OS choose a free dynamic port."
         },
         "vscodeCommandCli.enableLog": {
           "type": "boolean",
@@ -46,7 +54,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && vsce package",
+    "package": "npm run compile && vsce package --allow-missing-repository",
     "lint": "tsc --noEmit -p ./"
   },
   "devDependencies": {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORT="${VSCODE_COMMAND_CLI_PORT:-3005}"
+BASE_URL="${VSCODE_COMMAND_CLI_URL:-http://127.0.0.1:${VSCODE_COMMAND_CLI_PORT:-3005}}"
 COMMAND="${1:-}"
 
 if [ -z "$COMMAND" ]; then
@@ -18,4 +18,4 @@ for arg in "$@"; do
   curl_args+=(--data-urlencode "arg=${arg}")
 done
 
-curl "${curl_args[@]}" "http://127.0.0.1:${PORT}/execute"
+curl "${curl_args[@]}" "${BASE_URL}/execute"
