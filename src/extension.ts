@@ -314,7 +314,11 @@ function reviveCommandArg(arg: unknown): unknown {
 
 function reviveStringArg(value: string): unknown {
   if (value.startsWith('fsPath:')) {
-    return vscode.Uri.file(value.slice('fsPath:'.length));
+    return value.slice('fsPath:'.length);
+  }
+
+  if (value.startsWith('fileUri:')) {
+    return vscode.Uri.file(value.slice('fileUri:'.length));
   }
 
   if (value.startsWith('uri:')) {

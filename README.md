@@ -92,7 +92,8 @@ curl --get \
 
 URL 参数默认作为字符串传递。特殊前缀会转成 VS Code 常用类型：
 
-- `fsPath:<path>`: 转成 `vscode.Uri.file(path)`
+- `fsPath:<path>`: 去掉前缀后作为路径字符串传递
+- `fileUri:<path>`: 转成 `vscode.Uri.file(path)`
 - `uri:<uri>`: 转成 `vscode.Uri.parse(uri)`
 - `json:<json>`: 转成 JSON 值
 
@@ -104,6 +105,8 @@ curl --get \
   --data-urlencode "arg=fsPath:H:\Sandbox\Development\todolist" \
   "http://127.0.0.1:3005/execute"
 ```
+
+`git.openRepository` 需要的是路径字符串，所以这里使用 `fsPath:` 或直接传路径都可以；不要使用 `fileUri:`。
 
 ### POST 写法
 
