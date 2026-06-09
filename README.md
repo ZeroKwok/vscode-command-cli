@@ -1,6 +1,8 @@
 # VS Code Command CLI
 
-一个轻量级 VS Code 扩展：在扩展激活后启动本地 HTTP 服务，让终端可以通过 `curl` 触发 VS Code 内部命令。
+A lightweight VS Code extension: After the extension is activated, it allows terminals to trigger internal VS Code commands. 
+
+一个轻量级 VS Code 扩展：在扩展激活后允许终端触发 VS Code 内部命令。
 
 ## 功能
 
