@@ -53,20 +53,66 @@
 
    终端会收到 JSON 错误响应，VS Code 不会崩溃。
 
-## POST 示例
+## 通用参数转发
 
-```bash
-curl -X POST "http://127.0.0.1:3005/execute" \
-  -H "Content-Type: application/json" \
-  -d '{"command":"workbench.action.showCommands"}'
+插件只做一件事：从 URL 或 POST body 中读出 VS Code command id 和参数，然后调用：
+
+```typescript
+vscode.commands.executeCommand(command, ...args)
 ```
 
-如果命令需要参数，可以传入 JSON 数组：
+插件不会判断参数对这个命令是否合法。
+
+### GET 写法
+
+无参数命令：
+
+```bash
+curl --get --data-urlencode "command=workbench.action.showCommands" "http://127.0.0.1:3005/execute"
+```
+
+带位置参数。多个 `arg` 会按 URL 中出现的顺序传入：
+
+```bash
+curl --get \
+  --data-urlencode "command=git.openRepository" \
+  --data-urlencode "arg=fsPath:H:\Sandbox\Development\vscode-command-cli" \
+  "http://127.0.0.1:3005/execute"
+```
+
+也可以把命令 ID 放在路径里：
+
+```bash
+curl --get \
+  --data-urlencode "arg=fsPath:H:\Sandbox\Development\vscode-command-cli" \
+  "http://127.0.0.1:3005/execute/git.openRepository"
+```
+
+### 参数类型
+
+URL 参数默认作为字符串传递。特殊前缀会转成 VS Code 常用类型：
+
+- `fsPath:<path>`: 转成 `vscode.Uri.file(path)`
+- `uri:<uri>`: 转成 `vscode.Uri.parse(uri)`
+- `json:<json>`: 转成 JSON 值
+
+例如打开指定 Git 仓库：
+
+```bash
+curl --get \
+  --data-urlencode "command=git.openRepository" \
+  --data-urlencode "arg=fsPath:H:\Sandbox\Development\todolist" \
+  "http://127.0.0.1:3005/execute"
+```
+
+### POST 写法
+
+也可以传 JSON body：
 
 ```bash
 curl -X POST "http://127.0.0.1:3005/execute" \
   -H "Content-Type: application/json" \
-  -d '{"command":"vscode.open","args":["file:///path/to/file.txt"]}'
+  -d '{"command":"git.openRepository","args":[{"$fsPath":"H:\\Sandbox\\Development\\todolist"}]}'
 ```
 
 ## Helper 脚本
@@ -75,12 +121,14 @@ Git Bash / macOS / Linux:
 
 ```bash
 ./scripts/vscode-command-cli.sh workbench.action.showCommands
+./scripts/vscode-command-cli.sh git.openRepository 'fsPath:H:\Sandbox\Development\todolist'
 ```
 
 PowerShell:
 
 ```powershell
-.\scripts\vscode-command-cli.ps1 -Command workbench.action.showCommands
+.\scripts\vscode-command-cli.ps1 workbench.action.showCommands
+.\scripts\vscode-command-cli.ps1 git.openRepository "fsPath:H:\Sandbox\Development\todolist"
 ```
 
 也可以设置端口环境变量：

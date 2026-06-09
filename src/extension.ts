@@ -107,29 +107,41 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
   const requestUrl = new URL(request.url ?? '/', `http://${HOST}:${currentPort ?? getPort()}`);
 
-  if (requestUrl.pathname !== '/execute') {
-    sendJson(response, 404, { ok: false, error: 'Route not found. Use /execute?command=<commandId>.' });
-    return;
-  }
-
   try {
     const body = request.method === 'POST' ? await readJsonBody(request) : {};
-    const command = getStringParam(requestUrl, body, 'command');
-    const args = getArgs(requestUrl, body);
 
-    if (!command) {
-      sendJson(response, 400, { ok: false, error: 'Missing required parameter: command.' });
+    if (requestUrl.pathname === '/execute' || requestUrl.pathname.startsWith('/execute/')) {
+      await handleExecute(requestUrl, body, response);
       return;
     }
 
-    log(`Executing command: ${command}${args.length > 0 ? ` args=${JSON.stringify(args)}` : ''}`);
-    await vscode.commands.executeCommand(command, ...args);
-    sendJson(response, 200, { ok: true, command });
+    sendJson(response, 404, {
+      ok: false,
+      error: 'Route not found. Use /execute?command=<commandId>&arg=<value> or /execute/<commandId>?arg=<value>.'
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    log(`Execution failed: ${message}`);
+    log(`Request failed: ${message}`);
     sendJson(response, 500, { ok: false, error: message });
   }
+}
+
+async function handleExecute(
+  requestUrl: URL,
+  body: Record<string, unknown>,
+  response: http.ServerResponse
+): Promise<void> {
+  const command = getCommand(requestUrl, body);
+  const args = getArgs(requestUrl, body);
+
+  if (!command) {
+    sendJson(response, 400, { ok: false, error: 'Missing required parameter: command.' });
+    return;
+  }
+
+  log(`Executing command: ${command}${args.length > 0 ? ` args=${JSON.stringify(args)}` : ''}`);
+  await vscode.commands.executeCommand(command, ...args);
+  sendJson(response, 200, { ok: true, command });
 }
 
 function getPort(): number {
@@ -206,22 +218,112 @@ function getStringParam(url: URL, body: Record<string, unknown>, name: string): 
   return value?.trim() || undefined;
 }
 
+function getCommand(url: URL, body: Record<string, unknown>): string | undefined {
+  const command = getStringParam(url, body, 'command');
+  if (command) {
+    return command;
+  }
+
+  if (!url.pathname.startsWith('/execute/')) {
+    return undefined;
+  }
+
+  const encodedCommand = url.pathname.slice('/execute/'.length);
+  return decodeURIComponent(encodedCommand).trim() || undefined;
+}
+
 function getArgs(url: URL, body: Record<string, unknown>): unknown[] {
   const bodyArgs = body.args;
 
   if (Array.isArray(bodyArgs)) {
-    return bodyArgs;
+    return reviveCommandArgs(bodyArgs);
   }
 
   const queryArgs = url.searchParams.get('args');
-  if (!queryArgs) {
-    return [];
+  if (queryArgs) {
+    const parsed = JSON.parse(queryArgs) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error('The args parameter must be a JSON array.');
+    }
+
+    return reviveCommandArgs(parsed);
   }
 
-  const parsed = JSON.parse(queryArgs) as unknown;
-  if (!Array.isArray(parsed)) {
-    throw new Error('The args parameter must be a JSON array.');
+  const queryArgValues = url.searchParams.getAll('arg');
+  if (queryArgValues.length > 0) {
+    return queryArgValues.map((value) => reviveStringArg(value));
   }
 
-  return parsed;
+  const params = getPassthroughParams(url);
+  return Object.keys(params).length > 0 ? [params] : [];
+}
+
+function getPassthroughParams(url: URL): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+
+  for (const [key, value] of url.searchParams) {
+    if (key === 'command') {
+      continue;
+    }
+
+    const existing = params[key];
+    const revivedValue = reviveStringArg(value);
+
+    if (existing === undefined) {
+      params[key] = revivedValue;
+    } else if (Array.isArray(existing)) {
+      existing.push(revivedValue);
+    } else {
+      params[key] = [existing, revivedValue];
+    }
+  }
+
+  return params;
+}
+
+function reviveCommandArgs(args: unknown[]): unknown[] {
+  return args.map((arg) => reviveCommandArg(arg));
+}
+
+function reviveCommandArg(arg: unknown): unknown {
+  if (typeof arg === 'string') {
+    return reviveStringArg(arg);
+  }
+
+  if (Array.isArray(arg)) {
+    return arg.map((item) => reviveCommandArg(item));
+  }
+
+  if (!arg || typeof arg !== 'object') {
+    return arg;
+  }
+
+  const record = arg as Record<string, unknown>;
+  if (typeof record.$uri === 'string') {
+    return vscode.Uri.parse(record.$uri, true);
+  }
+
+  if (typeof record.$fsPath === 'string') {
+    return vscode.Uri.file(record.$fsPath);
+  }
+
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, reviveCommandArg(value)])
+  );
+}
+
+function reviveStringArg(value: string): unknown {
+  if (value.startsWith('fsPath:')) {
+    return vscode.Uri.file(value.slice('fsPath:'.length));
+  }
+
+  if (value.startsWith('uri:')) {
+    return vscode.Uri.parse(value.slice('uri:'.length), true);
+  }
+
+  if (value.startsWith('json:')) {
+    return reviveCommandArg(JSON.parse(value.slice('json:'.length)));
+  }
+
+  return value;
 }
