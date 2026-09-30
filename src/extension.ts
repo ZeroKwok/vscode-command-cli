@@ -1,318 +1,95 @@
-import * as http from 'node:http';
-import { URL } from 'node:url';
 import * as vscode from 'vscode';
 
 const CONFIG_SECTION = 'vscodeCommandCli';
-const HOST = '127.0.0.1';
-const PORT_ENV = 'VSCODE_COMMAND_CLI_PORT';
-const URL_ENV = 'VSCODE_COMMAND_CLI_URL';
+const EXECUTE_PATH = '/v1/execute';
+const MAX_PAYLOAD_LENGTH = 64 * 1024;
 
-let server: http.Server | undefined;
 let output: vscode.OutputChannel;
-let currentPort: number | undefined;
-let extensionContext: vscode.ExtensionContext;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  extensionContext = context;
+interface ExecuteRequest {
+  command: string;
+  args: unknown[];
+}
+
+export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel('VS Code Command CLI');
   context.subscriptions.push(output);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('vscodeCommandCli.restartServer', async () => {
-      await restartServer();
-      vscode.window.showInformationMessage(`VS Code Command CLI server is listening on ${serverUrl()}`);
-    }),
-    vscode.commands.registerCommand('vscodeCommandCli.showServerInfo', () => {
-      vscode.window.showInformationMessage(
-        server ? `VS Code Command CLI server is listening on ${serverUrl()}` : 'VS Code Command CLI server is not running.'
-      );
-    }),
-    vscode.workspace.onDidChangeConfiguration(async (event) => {
-      if (event.affectsConfiguration(`${CONFIG_SECTION}.serverPort`)) {
-        await restartServer();
+    vscode.window.registerUriHandler({
+      handleUri: async (uri) => {
+        await handleUri(uri);
       }
     }),
-    {
-      dispose: () => {
-        void stopServer();
-      }
-    }
+    vscode.commands.registerCommand('vscodeCommandCli.showUriInfo', async () => {
+      const endpoint = uriEndpoint(context.extension.id);
+      await vscode.env.clipboard.writeText(endpoint);
+      void vscode.window.showInformationMessage('VS Code Command CLI URI endpoint copied to the clipboard.');
+    })
   );
 
-  await startServer();
+  log(`URI handler ready: ${uriEndpoint(context.extension.id)}`);
 }
 
-export async function deactivate(): Promise<void> {
-  await stopServer();
-}
-
-async function restartServer(): Promise<void> {
-  await stopServer();
-  await startServer();
-}
-
-async function startServer(): Promise<void> {
-  const port = getPort();
-  currentPort = undefined;
-
-  server = http.createServer((request, response) => {
-    void handleRequest(request, response);
-  });
-
+async function handleUri(uri: vscode.Uri): Promise<void> {
   try {
-    await new Promise<void>((resolve, reject) => {
-      server?.listen(port, HOST, () => resolve());
-      server?.once('error', reject);
-    });
-  } catch (error) {
-    server = undefined;
-    const message = getServerErrorMessage(error, port);
-    log(message);
-    vscode.window.showErrorMessage(`VS Code Command CLI: ${message}`);
-    return;
-  }
-
-  currentPort = getListeningPort(server) ?? port;
-  updateTerminalEnvironment();
-  log(`Server started at ${serverUrl()}`);
-
-  server.on('error', (error: NodeJS.ErrnoException) => {
-    const message = getServerErrorMessage(error, port);
-    log(message);
-    vscode.window.showErrorMessage(`VS Code Command CLI: ${message}`);
-  });
-}
-
-async function stopServer(): Promise<void> {
-  const serverToClose = server;
-  server = undefined;
-  currentPort = undefined;
-  clearTerminalEnvironment();
-
-  if (!serverToClose) {
-    return;
-  }
-
-  await new Promise<void>((resolve) => {
-    serverToClose.close(() => resolve());
-  });
-
-  log('Server stopped');
-}
-
-async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
-  setCorsHeaders(response);
-
-  if (request.method === 'OPTIONS') {
-    sendJson(response, 204, {});
-    return;
-  }
-
-  if (request.method !== 'GET' && request.method !== 'POST') {
-    sendJson(response, 405, { ok: false, error: 'Only GET and POST are supported.' });
-    return;
-  }
-
-  const requestUrl = new URL(request.url ?? '/', `http://${HOST}:${currentPort ?? getPort()}`);
-
-  try {
-    const body = request.method === 'POST' ? await readJsonBody(request) : {};
-
-    if (requestUrl.pathname === '/execute' || requestUrl.pathname.startsWith('/execute/')) {
-      await handleExecute(requestUrl, body, response);
-      return;
+    if (uri.path !== EXECUTE_PATH) {
+      throw new Error(`Unsupported URI path: ${uri.path}`);
     }
 
-    sendJson(response, 404, {
-      ok: false,
-      error: 'Route not found. Use /execute?command=<commandId>&arg=<value> or /execute/<commandId>?arg=<value>.'
-    });
+    const request = parseExecuteRequest(uri);
+    const args = reviveCommandArgs(request.args);
+    log(`Executing command: ${request.command}${args.length > 0 ? ` args=${JSON.stringify(request.args)}` : ''}`);
+    await vscode.commands.executeCommand(request.command, ...args);
+    log(`Command completed: ${request.command}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    log(`Request failed: ${message}`);
-    sendJson(response, 500, { ok: false, error: message });
+    log(`URI request failed: ${message}`);
+    void vscode.window.showErrorMessage(`VS Code Command CLI: ${message}`);
   }
 }
 
-async function handleExecute(
-  requestUrl: URL,
-  body: Record<string, unknown>,
-  response: http.ServerResponse
-): Promise<void> {
-  const command = getCommand(requestUrl, body);
-  const args = getArgs(requestUrl, body);
+function uriEndpoint(extensionId: string): string {
+  return `${vscode.env.uriScheme}://${extensionId}${EXECUTE_PATH}`;
+}
 
-  if (!command) {
-    sendJson(response, 400, { ok: false, error: 'Missing required parameter: command.' });
-    return;
+function parseExecuteRequest(uri: vscode.Uri): ExecuteRequest {
+  const payload = new URLSearchParams(uri.query).get('p');
+
+  if (!payload) {
+    throw new Error('Missing required URI parameter: p.');
   }
 
-  log(`Executing command: ${command}${args.length > 0 ? ` args=${JSON.stringify(args)}` : ''}`);
-  await vscode.commands.executeCommand(command, ...args);
-  sendJson(response, 200, { ok: true, command });
-}
-
-function getPort(): number {
-  const configuredPort = vscode.workspace.getConfiguration(CONFIG_SECTION).get<number>('serverPort', 0);
-
-  if (!Number.isInteger(configuredPort) || configuredPort < 0 || configuredPort > 65535) {
-    return 0;
+  if (payload.length > MAX_PAYLOAD_LENGTH) {
+    throw new Error('URI payload exceeds the maximum supported size.');
   }
 
-  return configuredPort;
-}
-
-function serverUrl(): string {
-  return `http://${HOST}:${currentPort ?? getPort()}`;
-}
-
-function getListeningPort(activeServer: http.Server): number | undefined {
-  const address = activeServer.address();
-
-  if (address && typeof address === 'object') {
-    return address.port;
+  if (!/^[A-Za-z0-9_-]+$/.test(payload)) {
+    throw new Error('URI payload must be Base64URL encoded.');
   }
 
-  return undefined;
-}
-
-function updateTerminalEnvironment(): void {
-  if (!currentPort) {
-    return;
-  }
-
-  extensionContext.environmentVariableCollection.replace(PORT_ENV, String(currentPort));
-  extensionContext.environmentVariableCollection.replace(URL_ENV, serverUrl());
-  extensionContext.environmentVariableCollection.description = 'Exposes the VS Code Command CLI localhost server for newly created terminals.';
-  log(`Terminal environment updated: ${PORT_ENV}=${currentPort}, ${URL_ENV}=${serverUrl()}`);
-}
-
-function clearTerminalEnvironment(): void {
-  extensionContext.environmentVariableCollection.delete(PORT_ENV);
-  extensionContext.environmentVariableCollection.delete(URL_ENV);
-}
-
-function getServerErrorMessage(error: unknown, port: number): string {
-  const nodeError = error as NodeJS.ErrnoException;
-
-  if (nodeError.code === 'EADDRINUSE') {
-    return `Port ${port} is already in use. Change ${CONFIG_SECTION}.serverPort in VS Code Settings.`;
-  }
-
-  return `Server error: ${nodeError.message ?? String(error)}`;
-}
-
-function isLogEnabled(): boolean {
-  return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('enableLog', true);
-}
-
-function log(message: string): void {
-  if (isLogEnabled()) {
-    output.appendLine(`[${new Date().toISOString()}] ${message}`);
-  }
-}
-
-function setCorsHeaders(response: http.ServerResponse): void {
-  response.setHeader('Access-Control-Allow-Origin', '*');
-  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-}
-
-function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown): void {
-  response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
-  response.end(JSON.stringify(payload));
-}
-
-async function readJsonBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  if (chunks.length === 0) {
-    return {};
-  }
-
-  const rawBody = Buffer.concat(chunks).toString('utf8').trim();
-  if (!rawBody) {
-    return {};
-  }
-
+  let parsed: unknown;
   try {
-    return JSON.parse(rawBody) as Record<string, unknown>;
+    parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
   } catch {
-    return Object.fromEntries(new URLSearchParams(rawBody));
-  }
-}
-
-function getStringParam(url: URL, body: Record<string, unknown>, name: string): string | undefined {
-  const bodyValue = body[name];
-  const value = typeof bodyValue === 'string' ? bodyValue : url.searchParams.get(name);
-  return value?.trim() || undefined;
-}
-
-function getCommand(url: URL, body: Record<string, unknown>): string | undefined {
-  const command = getStringParam(url, body, 'command');
-  if (command) {
-    return command;
+    throw new Error('URI payload is not valid JSON.');
   }
 
-  if (!url.pathname.startsWith('/execute/')) {
-    return undefined;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('URI payload must be a JSON object.');
   }
 
-  const encodedCommand = url.pathname.slice('/execute/'.length);
-  return decodeURIComponent(encodedCommand).trim() || undefined;
-}
-
-function getArgs(url: URL, body: Record<string, unknown>): unknown[] {
-  const bodyArgs = body.args;
-
-  if (Array.isArray(bodyArgs)) {
-    return reviveCommandArgs(bodyArgs);
+  const record = parsed as Record<string, unknown>;
+  const command = typeof record.command === 'string' ? record.command.trim() : '';
+  if (!command) {
+    throw new Error('URI payload is missing a valid command.');
   }
 
-  const queryArgs = url.searchParams.get('args');
-  if (queryArgs) {
-    const parsed = JSON.parse(queryArgs) as unknown;
-    if (!Array.isArray(parsed)) {
-      throw new Error('The args parameter must be a JSON array.');
-    }
-
-    return reviveCommandArgs(parsed);
+  if (record.args !== undefined && !Array.isArray(record.args)) {
+    throw new Error('URI payload args must be a JSON array.');
   }
 
-  const queryArgValues = url.searchParams.getAll('arg');
-  if (queryArgValues.length > 0) {
-    return queryArgValues.map((value) => reviveStringArg(value));
-  }
-
-  const params = getPassthroughParams(url);
-  return Object.keys(params).length > 0 ? [params] : [];
-}
-
-function getPassthroughParams(url: URL): Record<string, unknown> {
-  const params: Record<string, unknown> = {};
-
-  for (const [key, value] of url.searchParams) {
-    if (key === 'command') {
-      continue;
-    }
-
-    const existing = params[key];
-    const revivedValue = reviveStringArg(value);
-
-    if (existing === undefined) {
-      params[key] = revivedValue;
-    } else if (Array.isArray(existing)) {
-      existing.push(revivedValue);
-    } else {
-      params[key] = [existing, revivedValue];
-    }
-  }
-
-  return params;
+  return { command, args: record.args ?? [] };
 }
 
 function reviveCommandArgs(args: unknown[]): unknown[] {
@@ -364,4 +141,14 @@ function reviveStringArg(value: string): unknown {
   }
 
   return value;
+}
+
+function isLogEnabled(): boolean {
+  return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('enableLog', true);
+}
+
+function log(message: string): void {
+  if (isLogEnabled()) {
+    output.appendLine(`[${new Date().toISOString()}] ${message}`);
+  }
 }

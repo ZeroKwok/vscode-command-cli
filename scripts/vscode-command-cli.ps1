@@ -5,7 +5,7 @@ param(
   [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
   [string[]] $Arg = @(),
 
-  [string] $BaseUrl = $(if ($env:VSCODE_COMMAND_CLI_URL) { $env:VSCODE_COMMAND_CLI_URL } elseif ($env:VSCODE_COMMAND_CLI_PORT) { "http://127.0.0.1:$env:VSCODE_COMMAND_CLI_PORT" } else { "http://127.0.0.1:3005" })
+  [string] $UriScheme = $(if ($env:VSCODE_COMMAND_CLI_URI_SCHEME) { $env:VSCODE_COMMAND_CLI_URI_SCHEME } else { 'vscode' })
 )
 
 if (-not $Command) {
@@ -13,9 +13,8 @@ if (-not $Command) {
   exit 1
 }
 
-$query = @("command=$([uri]::EscapeDataString($Command))")
-foreach ($item in $Arg) {
-  $query += "arg=$([uri]::EscapeDataString($item))"
-}
+$payload = @{ command = $Command; args = [string[]] $Arg } | ConvertTo-Json -Compress -Depth 100
+$encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+$uri = "${UriScheme}://zero.vscode-command-cli/v1/execute?p=$encoded"
 
-Invoke-RestMethod -Method Get -Uri "$BaseUrl/execute?$($query -join '&')"
+Start-Process -FilePath $uri

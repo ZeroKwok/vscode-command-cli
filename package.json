@@ -1,7 +1,7 @@
 {
   "name": "vscode-command-cli",
   "displayName": "VS Code Command CLI",
-  "description": "Trigger VS Code commands from an external terminal through a lightweight localhost HTTP bridge.",
+  "description": "Trigger VS Code commands from an external terminal through a VS Code URI handler.",
   "version": "0.0.2",
   "publisher": "zero",
   "license": "MIT",
@@ -10,7 +10,7 @@
     "vscode",
     "command",
     "cli",
-    "localhost"
+    "uri"
   ],
   "engines": {
     "vscode": "^1.90.0"
@@ -19,34 +19,24 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onUri",
+    "onCommand:vscodeCommandCli.showUriInfo"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "vscodeCommandCli.restartServer",
-        "title": "VS Code Command CLI: Restart Server"
-      },
-      {
-        "command": "vscodeCommandCli.showServerInfo",
-        "title": "VS Code Command CLI: Show Server Info"
+        "command": "vscodeCommandCli.showUriInfo",
+        "title": "VS Code Command CLI: Copy URI Endpoint"
       }
     ],
     "configuration": {
       "title": "VS Code Command CLI",
       "properties": {
-        "vscodeCommandCli.serverPort": {
-          "type": "number",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 65535,
-          "description": "Localhost port used by the command execution HTTP server. Use 0 to let the OS choose a free dynamic port."
-        },
         "vscodeCommandCli.enableLog": {
           "type": "boolean",
           "default": true,
-          "description": "Write request and server lifecycle logs to the VS Code Command CLI output channel."
+          "description": "Write URI request and command execution logs to the VS Code Command CLI output channel."
         }
       }
     }
