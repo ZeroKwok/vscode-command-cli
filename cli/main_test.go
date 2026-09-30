@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,48 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRunVersionPrintsCLIOnly(t *testing.T) {
+	previousVersion := cliVersion
+	cliVersion = "1.2.3"
+	defer func() { cliVersion = previousVersion }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if exitCode := run([]string{"--version"}, &stdout, &stderr); exitCode != 0 {
+		t.Fatalf("run returned %d: %s", exitCode, stderr.String())
+	}
+	if got := stdout.String(); got != "code-cli 1.2.3\n" {
+		t.Fatalf("unexpected version output: %q", got)
+	}
+}
+
+func TestVersionRequestContainsAnEmptyArgsArray(t *testing.T) {
+	uri, err := makeURI("vscode", executeRequest{
+		Version: 1,
+		Command: versionCommand,
+		Args:    []string{},
+	})
+	if err != nil {
+		t.Fatalf("make URI: %v", err)
+	}
+
+	parsedURI, err := url.Parse(uri)
+	if err != nil {
+		t.Fatalf("parse URI: %v", err)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parsedURI.Query().Get("p"))
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("decode payload JSON: %v", err)
+	}
+	if got := string(decoded["args"]); got != "[]" {
+		t.Fatalf("version request args = %s, want []", got)
+	}
+}
 
 func TestMakeURIEncodesRequest(t *testing.T) {
 	uri, err := makeURI("vscode", executeRequest{
@@ -101,5 +144,24 @@ func TestResultFromReplyDoesNotCreateVSCodeLayerForCLIFailure(t *testing.T) {
 
 	if strings.Contains(string(result), `"vscode"`) {
 		t.Fatalf("CLI failure unexpectedly included a VS Code layer: %s", result)
+	}
+}
+
+func TestVersionResultIncludesCLIVSCodeAndExtensionVersions(t *testing.T) {
+	previousVersion := cliVersion
+	cliVersion = "1.2.3"
+	defer func() { cliVersion = previousVersion }()
+
+	result, err := json.Marshal(versionResultFromReply(commandReply{
+		OK:     true,
+		Result: json.RawMessage(`{"extensionVersion":"4.5.6","vscodeVersion":"1.99.0"}`),
+	}))
+	if err != nil {
+		t.Fatalf("marshal version result: %v", err)
+	}
+
+	want := `{"cli":{"ok":true,"version":"1.2.3"},"vscode":{"ok":true,"version":"1.99.0","extensionVersion":"4.5.6"}}`
+	if got := string(result); got != want {
+		t.Fatalf("unexpected version result:\nwant %s\n got %s", want, got)
 	}
 }

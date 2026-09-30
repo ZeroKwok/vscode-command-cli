@@ -57,6 +57,27 @@ Send a one-way command:
 .\bin\code-cli.exe git.openRepository "fsPath:H:\Sandbox\Development\todolist"
 ```
 
+Print the locally built CLI version:
+
+```powershell
+.\bin\code-cli.exe --version
+```
+
+Add `--wait` to query the extension installed in the foremost VS Code window. With no `--timeout`, this waits indefinitely:
+
+```powershell
+.\bin\code-cli.exe --version --wait
+```
+
+The result distinguishes the local CLI version from the responding extension and VS Code versions:
+
+```json
+{
+  "cli": { "ok": true, "version": "0.0.2" },
+  "vscode": { "ok": true, "extensionVersion": "0.0.2", "version": "1.93.1" }
+}
+```
+
 Wait for a JSON result:
 
 ```powershell
@@ -80,6 +101,7 @@ By default, `--wait` has no timeout. Set one when necessary:
 
 ```powershell
 .\bin\code-cli.exe --wait --timeout 60s some.extension.command
+.\bin\code-cli.exe --version --wait --timeout 60s
 ```
 
 When the client reaches that timeout, it outputs only a CLI-layer result such as `{ "cli": { "ok": false, "error": { "code": "timeout" } } }`. It does not infer an outcome for VS Code.

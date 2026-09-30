@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 
 const CONFIG_SECTION = 'vscodeCommandCli';
 const EXECUTE_PATH = '/v1/execute';
+const VERSION_COMMAND = 'vscodeCommandCli.getVersion';
 const MAX_PAYLOAD_LENGTH = 64 * 1024;
 const MAX_REPLY_LENGTH = 1024 * 1024;
 
@@ -43,7 +44,11 @@ export function activate(context: vscode.ExtensionContext): void {
       const endpoint = uriEndpoint(context.extension.id);
       await vscode.env.clipboard.writeText(endpoint);
       void vscode.window.showInformationMessage('VS Code Command CLI URI endpoint copied to the clipboard.');
-    })
+    }),
+    vscode.commands.registerCommand(VERSION_COMMAND, () => ({
+      extensionVersion: String(context.extension.packageJSON.version),
+      vscodeVersion: vscode.version
+    }))
   );
 
   log(`URI handler ready: ${uriEndpoint(context.extension.id)}`);

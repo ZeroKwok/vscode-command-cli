@@ -19,10 +19,14 @@ import (
 )
 
 const (
-	extensionID = "zero.vscode-command-cli"
-	executePath = "/v1/execute"
-	resultPath  = "/v1/result/"
+	extensionID    = "zero.vscode-command-cli"
+	executePath    = "/v1/execute"
+	resultPath     = "/v1/result/"
+	versionCommand = "vscodeCommandCli.getVersion"
 )
+
+// cliVersion is set from package.json by the release build.
+var cliVersion = "dev"
 
 type executeRequest struct {
 	Version int          `json:"version"`
@@ -51,9 +55,11 @@ type resultEnvelope struct {
 }
 
 type resultLayer struct {
-	OK     bool            `json:"ok"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *resultError    `json:"error,omitempty"`
+	OK               bool            `json:"ok"`
+	Version          string          `json:"version,omitempty"`
+	ExtensionVersion string          `json:"extensionVersion,omitempty"`
+	Result           json.RawMessage `json:"result,omitempty"`
+	Error            *resultError    `json:"error,omitempty"`
 }
 
 type resultError struct {
@@ -75,11 +81,13 @@ func main() {
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	flags := flag.NewFlagSet("code-cli", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	showVersion := flags.Bool("version", false, "print the CLI version; add --wait to query the active VS Code instance")
 	waitForResult := flags.Bool("wait", false, "wait for and print the command result as JSON")
 	timeout := flags.Duration("timeout", 0, "maximum time to wait when --wait is set; zero waits indefinitely")
 	uriScheme := flags.String("uri-scheme", defaultURIScheme(), "VS Code URI scheme")
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: code-cli [--wait] [--timeout 15s] [--uri-scheme vscode] <vscode.commandId> [arg...]")
+		fmt.Fprintln(stderr, "Usage: code-cli --version [--wait] [--timeout 15s] [--uri-scheme vscode]")
+		fmt.Fprintln(stderr, "       code-cli [--wait] [--timeout 15s] [--uri-scheme vscode] <vscode.commandId> [arg...]")
 	}
 
 	if err := flags.Parse(args); err != nil {
@@ -87,28 +95,38 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	commandArgs := flags.Args()
-	if len(commandArgs) == 0 {
+	if *showVersion && len(commandArgs) > 0 {
+		fmt.Fprintln(stderr, "Error: --version does not accept a command or arguments.")
+		return 2
+	}
+	if *showVersion && !*waitForResult {
+		fmt.Fprintf(stdout, "code-cli %s\n", cliVersion)
+		return 0
+	}
+	if !*showVersion && len(commandArgs) == 0 {
 		flags.Usage()
 		return 2
 	}
 
-	request := executeRequest{
-		Version: 1,
-		Command: commandArgs[0],
-		Args:    commandArgs[1:],
+	request := executeRequest{Version: 1, Args: []string{}}
+	if *showVersion {
+		request.Command = versionCommand
+	} else {
+		request.Command = commandArgs[0]
+		request.Args = commandArgs[1:]
 	}
 
 	var callback *callbackServer
 	if *waitForResult {
 		if *timeout < 0 {
-			writeResult(stdout, cliFailure("invalid_timeout", "--timeout must not be negative."))
+			writeResult(stdout, commandCLIFailure(*showVersion, "invalid_timeout", "--timeout must not be negative."))
 			return 2
 		}
 
 		var err error
 		callback, err = newCallbackServer()
 		if err != nil {
-			writeResult(stdout, cliFailure("callback_start_failed", err.Error()))
+			writeResult(stdout, commandCLIFailure(*showVersion, "callback_start_failed", err.Error()))
 			return 1
 		}
 		defer callback.close()
@@ -118,7 +136,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	uri, err := makeURI(*uriScheme, request)
 	if err != nil {
 		if callback != nil {
-			writeResult(stdout, cliFailure("invalid_request", err.Error()))
+			writeResult(stdout, commandCLIFailure(*showVersion, "invalid_request", err.Error()))
 		} else {
 			fmt.Fprintf(stderr, "Error: build URI: %v\n", err)
 		}
@@ -127,7 +145,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	if err := openURI(uri); err != nil {
 		if callback != nil {
-			writeResult(stdout, cliFailure("open_uri_failed", err.Error()))
+			writeResult(stdout, commandCLIFailure(*showVersion, "open_uri_failed", err.Error()))
 		} else {
 			fmt.Fprintf(stderr, "Error: open VS Code URI: %v\n", err)
 		}
@@ -147,14 +165,18 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	reply, err := callback.wait(ctx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			writeResult(stdout, cliFailure("timeout", fmt.Sprintf("Timed out after %s.", *timeout)))
+			writeResult(stdout, commandCLIFailure(*showVersion, "timeout", fmt.Sprintf("Timed out after %s.", *timeout)))
 		} else {
-			writeResult(stdout, cliFailure("callback_failed", err.Error()))
+			writeResult(stdout, commandCLIFailure(*showVersion, "callback_failed", err.Error()))
 		}
 		return 1
 	}
 
-	if err := writeResult(stdout, resultFromReply(reply)); err != nil {
+	result := resultFromReply(reply)
+	if *showVersion {
+		result = versionResultFromReply(reply)
+	}
+	if err := writeResult(stdout, result); err != nil {
 		fmt.Fprintf(stderr, "Error: write command result: %v\n", err)
 		return 1
 	}
@@ -178,6 +200,14 @@ func cliFailure(code string, message string) resultEnvelope {
 	}
 }
 
+func commandCLIFailure(includeVersion bool, code string, message string) resultEnvelope {
+	result := cliFailure(code, message)
+	if includeVersion {
+		result.CLI.Version = cliVersion
+	}
+	return result
+}
+
 func resultFromReply(reply commandReply) resultEnvelope {
 	if !reply.OK {
 		return resultEnvelope{
@@ -196,6 +226,33 @@ func resultFromReply(reply commandReply) resultEnvelope {
 			Result: reply.Result,
 		},
 	}
+}
+
+func versionResultFromReply(reply commandReply) resultEnvelope {
+	result := resultFromReply(reply)
+	result.CLI.Version = cliVersion
+	if !reply.OK {
+		return result
+	}
+
+	var version struct {
+		ExtensionVersion string `json:"extensionVersion"`
+		VSCodeVersion    string `json:"vscodeVersion"`
+	}
+	if err := json.Unmarshal(reply.Result, &version); err != nil || version.ExtensionVersion == "" || version.VSCodeVersion == "" {
+		result.VSCode = &resultLayer{
+			OK:    false,
+			Error: &resultError{Code: "invalid_version_response", Message: "The VS Code extension returned an invalid version response."},
+		}
+		return result
+	}
+
+	result.VSCode = &resultLayer{
+		OK:               true,
+		Version:          version.VSCodeVersion,
+		ExtensionVersion: version.ExtensionVersion,
+	}
+	return result
 }
 
 func defaultURIScheme() string {

@@ -99,8 +99,13 @@ CLI 对用户输出时封装为两层。只有成功收到有效扩展回调时�
 code-cli [--wait] [--timeout 15s] [--uri-scheme vscode] <vscode.commandId> [arg...]
 ```
 
+```text
+code-cli --version [--wait] [--timeout 15s] [--uri-scheme vscode]
+```
+
 - 默认模式：打开 URI 后立即退出。
 - `--wait`：等待命令完成并输出分层 JSON 结果；不设置 `--timeout` 时无限等待。
+- `--version`：不带 `--wait` 时仅输出本地 CLI 版本；带 `--wait` 时调用当前最前方 VS Code 实例内的插件版本命令，并输出 CLI、插件和 VS Code 的版本。
 - `--timeout`：仅在 `--wait` 下生效；超时时只返回 CLI 层错误。
 - `--uri-scheme`：支持 Stable 的 `vscode` 与 Insiders 的 `vscode-insiders`。
 
