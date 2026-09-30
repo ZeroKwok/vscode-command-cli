@@ -4,6 +4,24 @@ A VS Code extension and Go client for triggering VS Code commands from a termina
 
 一个由 VS Code 扩展和 Go 客户端组成的命令行工具：终端请求通过扩展专属 URI Handler 投递给最前方的 VS Code 窗口。
 
+## Quick Start
+
+`Justfile` is the primary entry point:
+
+```powershell
+just
+just check
+just build
+just install
+```
+
+`just build` writes both `bin\code-cli.exe` and `bin\vscode-command-cli.vsix`. `just install` only installs that VSIX through `code`; it does not copy the CLI outside this project. Reload VS Code windows after installation. Override the VS Code CLI when needed:
+
+```powershell
+$env:VSCODE_CLI = 'code-insiders'
+just install
+```
+
 ## Architecture
 
 ```text
@@ -19,7 +37,7 @@ The extension does not listen on an HTTP port and does not inject terminal envir
 Build the Windows client:
 
 ```powershell
-npm run build:client
+just build-cli
 ```
 
 This produces `bin\code-cli.exe`. Add `bin` to `PATH`, or point wrappers to it with `VSCODE_COMMAND_CLI_BIN`.
@@ -57,7 +75,7 @@ The command result must be JSON-compatible. Returned `vscode.Uri` values are rep
 
 Stable VS Code uses the `vscode` URI scheme. Use `--uri-scheme vscode-insiders` or set `VSCODE_COMMAND_CLI_URI_SCHEME=vscode-insiders` for Insiders.
 
-The external Git Bash shortcut `code-git-open.sh` can call `code-cli.exe git.openRepository` directly. Place `code-cli.exe` beside the shortcut or add it to `PATH`.
+`scripts/code-git-open.sh` opens the Git repository at the current working directory. It checks `code-cli.exe` on `PATH` first, then this project's `bin\code-cli.exe`.
 
 ## Argument Rules
 
@@ -79,11 +97,8 @@ Each request is processed by the foremost VS Code window. It is not broadcast to
 ## Development And Verification
 
 ```powershell
-npm install
-npm run compile
-npm run lint
-npm run build:client
-npm run test:client
+just check
+just build
 ```
 
 Install the generated extension VSIX in a test VS Code instance, reload it, make that instance the foremost VS Code window, and run:
@@ -100,4 +115,4 @@ For a failing command or malformed payload, inspect the `VS Code Command CLI` ou
 npm run package
 ```
 
-The VSIX contains the extension. Distribute the Go client separately from `bin/code-cli.exe` or build it from `cli`.
+Both build artifacts are in `bin`: `code-cli.exe` and `vscode-command-cli.vsix`.

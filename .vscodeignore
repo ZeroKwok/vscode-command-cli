@@ -1,9 +1,16 @@
-.vscode/**
-src/**
-node_modules/**
-doc/**
 .gitignore
-tsconfig.json
-需求文档 (PRD).md
+.vscodeignore
+.vscode/**
+Justfile
+src/**
+cli/**
+scripts/**
+doc/**
+bin/**
 out/**/*.map
+node_modules/**
+debug.log
+pkg/**
 *.vsix
+tsconfig.json
+go.mod

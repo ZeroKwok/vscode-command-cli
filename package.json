@@ -46,7 +46,7 @@
     "build:client": "go build -o bin/code-cli.exe ./cli",
     "test:client": "go test ./cli",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && vsce package --allow-missing-repository",
+    "package": "npm run compile && node -e \"require('fs').mkdirSync('bin', { recursive: true })\" && vsce package --allow-missing-repository --out bin/vscode-command-cli.vsix",
     "lint": "tsc --noEmit -p ./"
   },
   "devDependencies": {

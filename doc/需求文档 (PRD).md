@@ -11,6 +11,8 @@
 
 不再由 VS Code 实例监听端口，也不通过 `EnvironmentVariableCollection` 将端口注入集成终端。
 
+`Justfile` 是用户的统一入口，提供 `check`、`build`、`install`、`build-extension`、`install-extension` 和 `build-cli`。构建产物统一位于项目 `bin`：`code-cli.exe` 和 `vscode-command-cli.vsix`。`install` 仅通过 `VSCODE_CLI`（默认 `code`）安装 VSIX，不复制 CLI 到项目外部。
+
 ## 2. 传输协议
 
 ### 2.1 命令投递
