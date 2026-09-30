@@ -43,6 +43,8 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "build:client": "go build -o bin/code-cli.exe ./cli",
+    "test:client": "go test ./cli",
     "watch": "tsc -watch -p ./",
     "package": "npm run compile && vsce package --allow-missing-repository",
     "lint": "tsc --noEmit -p ./"

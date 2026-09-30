@@ -1,112 +1,103 @@
 # VS Code Command CLI
 
-A lightweight VS Code extension that triggers VS Code commands from an external terminal through an extension-specific URI handler.
+A VS Code extension and Go client for triggering VS Code commands from a terminal. Requests are delivered through an extension-specific URI handler to the foremost VS Code window.
 
-一个轻量级 VS Code 扩展：通过扩展专属 URI Handler，让外部终端触发当前最前方 VS Code 窗口中的内部命令。
+一个由 VS Code 扩展和 Go 客户端组成的命令行工具：终端请求通过扩展专属 URI Handler 投递给最前方的 VS Code 窗口。
 
-## 工作方式
-
-helper 脚本将命令 ID 和位置参数序列化为 JSON，并使用 Base64URL 编码为以下 URI：
+## Architecture
 
 ```text
-vscode://zero.vscode-command-cli/v1/execute?p=<Base64URL JSON>
+code-cli.exe -> vscode://zero.vscode-command-cli/v1/execute -> foremost VS Code window
 ```
 
-操作系统将 URI 交给 VS Code；当存在多个 VS Code 窗口时，由最前方窗口中的扩展处理。扩展随即调用：
+The extension does not listen on an HTTP port and does not inject terminal environment variables. The Go client encodes the command payload, opens the URI, and owns any temporary callback listener.
 
-```typescript
-vscode.commands.executeCommand(command, ...args)
-```
+扩展不监听 HTTP 端口，也不注入终端环境变量。Go 客户端负责编码命令、打开 URI，并在需要返回值时临时创建回调监听器。
 
-该机制不启动 HTTP 服务、不监听端口，也不向集成终端注入环境变量。调用是异步单向的：脚本成功打开 URI 不代表目标命令一定执行成功；执行日志和错误显示在目标 VS Code 窗口的 `VS Code Command CLI` 输出通道中。
+## Build The Client
 
-## 参数规则
-
-脚本的第一个参数是 VS Code command ID，后续参数按顺序作为 command arguments 传递。字符串参数兼容以下转换前缀：
-
-- `fsPath:<path>`: 去掉前缀后作为路径字符串传递。
-- `fileUri:<path>`: 转换为 `vscode.Uri.file(path)`。
-- `uri:<uri>`: 转换为 `vscode.Uri.parse(uri)`。
-- `json:<json>`: 解析为 JSON 值。
-
-例如，`git.openRepository` 需要路径字符串，因此使用 `fsPath:` 或直接传入路径；它不应接收 `fileUri:`。
-
-## Helper 脚本
-
-Git Bash / macOS / Linux：
-
-```bash
-./scripts/vscode-command-cli.sh workbench.action.showCommands
-./scripts/vscode-command-cli.sh git.openRepository 'fsPath:H:\Sandbox\Development\todolist'
-./scripts/vscode-command-cli.sh myPlugin.handleMessage 'json:{"foo":"bar"}'
-```
-
-Shell 脚本使用 `node` 将命令和参数编码为 Base64URL，因此要求 `node` 在 `PATH` 中。
-
-PowerShell：
+Build the Windows client:
 
 ```powershell
-.\scripts\vscode-command-cli.ps1 workbench.action.showCommands
-.\scripts\vscode-command-cli.ps1 git.openRepository "fsPath:H:\Sandbox\Development\todolist"
-.\scripts\vscode-command-cli.ps1 myPlugin.handleMessage 'json:{"foo":"bar"}'
+npm run build:client
 ```
 
-Stable VS Code 默认使用 `vscode` URI scheme。若使用 VS Code Insiders，可通过参数或环境变量指定 `vscode-insiders`：
+This produces `bin\code-cli.exe`. Add `bin` to `PATH`, or point wrappers to it with `VSCODE_COMMAND_CLI_BIN`.
 
 ```powershell
-.\scripts\vscode-command-cli.ps1 workbench.action.showCommands -UriScheme vscode-insiders
+$env:VSCODE_COMMAND_CLI_BIN = 'H:\Sandbox\Development\vscode-command-cli\bin\code-cli.exe'
 ```
 
-```bash
-VSCODE_COMMAND_CLI_URI_SCHEME=vscode-insiders ./scripts/vscode-command-cli.sh workbench.action.showCommands
+The source is in `cli` and only uses the Go standard library. Build a client for another platform directly with `go build` and an appropriate output name.
+
+## Usage
+
+Send a one-way command:
+
+```powershell
+.\bin\code-cli.exe workbench.action.showCommands
+.\bin\code-cli.exe git.openRepository "fsPath:H:\Sandbox\Development\todolist"
 ```
 
-URI 的 authority 固定为扩展 ID `zero.vscode-command-cli`。使用命令面板中的 `VS Code Command CLI: Copy URI Endpoint` 可以复制当前 VS Code 发行版对应的 URI endpoint。
+Wait for a JSON result:
 
-## 多窗口语义
+```powershell
+.\bin\code-cli.exe --wait some.extension.command 'json:{"foo":"bar"}'
+```
 
-消息始终发送到最前方的 VS Code 窗口，而非启动脚本的集成终端所属窗口。这个语义同时适用于 VS Code 集成终端和外部终端；不会向多个 VS Code 实例广播。
+`--wait` starts a temporary `127.0.0.1` callback server in `code-cli.exe`, embeds its URL, request ID, and random token in the URI request, then prints one JSON response to stdout. The extension POSTs the result to that callback after `executeCommand` completes. No VS Code instance port is exposed or injected.
 
-URI Handler 不提供 HTTP 风格的同步响应，也不适合传输很大的载荷。需要同步结果、或必须路由到后台指定窗口的场景，需要另行设计带实例标识的通信协议。
+Default timeout is 15 seconds. Override it when necessary:
 
-## 本地开发和调试
+```powershell
+.\bin\code-cli.exe --wait --timeout 60s some.extension.command
+```
 
-1. 安装依赖：
+The command result must be JSON-compatible. Returned `vscode.Uri` values are represented as `{ "$uri": "..." }`; circular objects, functions, symbols, and bigint values cannot be returned.
 
-   ```bash
-   npm install
-   ```
+Stable VS Code uses the `vscode` URI scheme. Use `--uri-scheme vscode-insiders` or set `VSCODE_COMMAND_CLI_URI_SCHEME=vscode-insiders` for Insiders.
 
-2. 编译：
+The external Git Bash shortcut `code-git-open.sh` can call `code-cli.exe git.openRepository` directly. Place `code-cli.exe` beside the shortcut or add it to `PATH`.
 
-   ```bash
-   npm run compile
-   ```
+## Argument Rules
 
-3. 在 VS Code 中打开本目录，按 `F5` 并选择 `Run Extension`，启动 Extension Development Host。
+The first non-flag argument is the VS Code command ID; following arguments preserve their order. Strings support these conversion prefixes:
 
-4. 使 Extension Development Host 成为最前方窗口，再从任意终端运行：
+- `fsPath:<path>`: pass the path as a string after removing the prefix.
+- `fileUri:<path>`: convert to `vscode.Uri.file(path)`.
+- `uri:<uri>`: convert to `vscode.Uri.parse(uri)`.
+- `json:<json>`: parse JSON and recursively restore URI marker objects.
 
-   ```bash
-   ./scripts/vscode-command-cli.sh workbench.action.showCommands
-   ```
+Objects with `{ "$fsPath": "..." }` and `{ "$uri": "..." }` are restored to `vscode.Uri.file(...)` and `vscode.Uri.parse(...)` respectively.
 
-   或：
+## Multi-window Semantics
 
-   ```powershell
-   .\scripts\vscode-command-cli.ps1 workbench.action.showCommands
-   ```
+Each request is processed by the foremost VS Code window. It is not broadcast to every VS Code instance and is not pinned to the window that created an integrated terminal.
 
-5. 验证命令面板在最前方的 Extension Development Host 中打开。传入错误的 URI payload 或命令参数时，在该窗口的 `VS Code Command CLI` 输出通道中查看错误。
+`--wait` is supported for local extension hosts. A VS Code Remote extension host cannot reach the local callback at `127.0.0.1`; use one-way mode or design a remote-aware broker for that scenario.
 
-## 配置项
+## Development And Verification
 
-- `vscodeCommandCli.enableLog`: 是否写入 `VS Code Command CLI` 输出通道，默认 `true`。
+```powershell
+npm install
+npm run compile
+npm run lint
+npm run build:client
+npm run test:client
+```
 
-## 打包
+Install the generated extension VSIX in a test VS Code instance, reload it, make that instance the foremost VS Code window, and run:
 
-```bash
+```powershell
+.\bin\code-cli.exe workbench.action.showCommands
+```
+
+For a failing command or malformed payload, inspect the `VS Code Command CLI` output channel in the target window.
+
+## Extension Packaging
+
+```powershell
 npm run package
 ```
 
-生成的 `.vsix` 可以通过 VS Code 的 `Extensions: Install from VSIX...` 安装。
+The VSIX contains the extension. Distribute the Go client separately from `bin/code-cli.exe` or build it from `cli`.
