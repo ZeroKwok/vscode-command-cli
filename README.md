@@ -63,15 +63,26 @@ Wait for a JSON result:
 .\bin\code-cli.exe --wait some.extension.command 'json:{"foo":"bar"}'
 ```
 
-`--wait` starts a temporary `127.0.0.1` callback server in `code-cli.exe`, embeds its URL, request ID, and random token in the URI request, then prints one JSON response to stdout. The extension POSTs the result to that callback after `executeCommand` completes. No VS Code instance port is exposed or injected.
+`--wait` starts a temporary `127.0.0.1` callback server in `code-cli.exe`, embeds its URL, request ID, and random token in the URI request, then waits for `executeCommand` to complete. With no `--timeout`, it waits indefinitely. No VS Code instance port is exposed or injected.
 
-Default timeout is 15 seconds. Override it when necessary:
+Successful responses use two layers. `cli` describes URI delivery and callback handling; `vscode` appears only after a valid extension callback:
+
+```json
+{
+  "cli": { "ok": true },
+  "vscode": { "ok": true, "result": { "value": "..." } }
+}
+```
+
+Commands that complete without a return value omit `vscode.result`. The command result must be JSON-compatible. Returned `vscode.Uri` values are represented as `{ "$uri": "..." }`; circular objects, functions, symbols, and bigint values cannot be returned.
+
+By default, `--wait` has no timeout. Set one when necessary:
 
 ```powershell
 .\bin\code-cli.exe --wait --timeout 60s some.extension.command
 ```
 
-The command result must be JSON-compatible. Returned `vscode.Uri` values are represented as `{ "$uri": "..." }`; circular objects, functions, symbols, and bigint values cannot be returned.
+When the client reaches that timeout, it outputs only a CLI-layer result such as `{ "cli": { "ok": false, "error": { "code": "timeout" } } }`. It does not infer an outcome for VS Code.
 
 Stable VS Code uses the `vscode` URI scheme. Use `--uri-scheme vscode-insiders` or set `VSCODE_COMMAND_CLI_URI_SCHEME=vscode-insiders` for Insiders.
 

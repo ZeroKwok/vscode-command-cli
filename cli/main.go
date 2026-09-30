@@ -38,11 +38,27 @@ type replyTarget struct {
 }
 
 type commandReply struct {
-	Version   int    `json:"version"`
-	RequestID string `json:"requestId"`
-	OK        bool   `json:"ok"`
-	Result    any    `json:"result,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Version   int             `json:"version"`
+	RequestID string          `json:"requestId"`
+	OK        bool            `json:"ok"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
+}
+
+type resultEnvelope struct {
+	CLI    resultLayer  `json:"cli"`
+	VSCode *resultLayer `json:"vscode,omitempty"`
+}
+
+type resultLayer struct {
+	OK     bool            `json:"ok"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *resultError    `json:"error,omitempty"`
+}
+
+type resultError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 type callbackServer struct {
@@ -60,7 +76,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	flags := flag.NewFlagSet("code-cli", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	waitForResult := flags.Bool("wait", false, "wait for and print the command result as JSON")
-	timeout := flags.Duration("timeout", 15*time.Second, "maximum time to wait when --wait is set")
+	timeout := flags.Duration("timeout", 0, "maximum time to wait when --wait is set; zero waits indefinitely")
 	uriScheme := flags.String("uri-scheme", defaultURIScheme(), "VS Code URI scheme")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: code-cli [--wait] [--timeout 15s] [--uri-scheme vscode] <vscode.commandId> [arg...]")
@@ -84,15 +100,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	var callback *callbackServer
 	if *waitForResult {
-		if *timeout <= 0 {
-			fmt.Fprintln(stderr, "Error: --timeout must be greater than zero.")
+		if *timeout < 0 {
+			writeResult(stdout, cliFailure("invalid_timeout", "--timeout must not be negative."))
 			return 2
 		}
 
 		var err error
 		callback, err = newCallbackServer()
 		if err != nil {
-			fmt.Fprintf(stderr, "Error: start callback server: %v\n", err)
+			writeResult(stdout, cliFailure("callback_start_failed", err.Error()))
 			return 1
 		}
 		defer callback.close()
@@ -101,12 +117,20 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	uri, err := makeURI(*uriScheme, request)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: build URI: %v\n", err)
+		if callback != nil {
+			writeResult(stdout, cliFailure("invalid_request", err.Error()))
+		} else {
+			fmt.Fprintf(stderr, "Error: build URI: %v\n", err)
+		}
 		return 2
 	}
 
 	if err := openURI(uri); err != nil {
-		fmt.Fprintf(stderr, "Error: open VS Code URI: %v\n", err)
+		if callback != nil {
+			writeResult(stdout, cliFailure("open_uri_failed", err.Error()))
+		} else {
+			fmt.Fprintf(stderr, "Error: open VS Code URI: %v\n", err)
+		}
 		return 1
 	}
 
@@ -114,15 +138,23 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	ctx := context.Background()
+	cancel := func() {}
+	if *timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+	}
 	defer cancel()
 	reply, err := callback.wait(ctx)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: wait for command result: %v\n", err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			writeResult(stdout, cliFailure("timeout", fmt.Sprintf("Timed out after %s.", *timeout)))
+		} else {
+			writeResult(stdout, cliFailure("callback_failed", err.Error()))
+		}
 		return 1
 	}
 
-	if err := json.NewEncoder(stdout).Encode(reply); err != nil {
+	if err := writeResult(stdout, resultFromReply(reply)); err != nil {
 		fmt.Fprintf(stderr, "Error: write command result: %v\n", err)
 		return 1
 	}
@@ -131,6 +163,39 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	return 0
+}
+
+func writeResult(writer io.Writer, result resultEnvelope) error {
+	return json.NewEncoder(writer).Encode(result)
+}
+
+func cliFailure(code string, message string) resultEnvelope {
+	return resultEnvelope{
+		CLI: resultLayer{
+			OK:    false,
+			Error: &resultError{Code: code, Message: message},
+		},
+	}
+}
+
+func resultFromReply(reply commandReply) resultEnvelope {
+	if !reply.OK {
+		return resultEnvelope{
+			CLI: resultLayer{OK: true},
+			VSCode: &resultLayer{
+				OK:    false,
+				Error: &resultError{Code: "command_failed", Message: reply.Error},
+			},
+		}
+	}
+
+	return resultEnvelope{
+		CLI: resultLayer{OK: true},
+		VSCode: &resultLayer{
+			OK:     true,
+			Result: reply.Result,
+		},
+	}
 }
 
 func defaultURIScheme() string {

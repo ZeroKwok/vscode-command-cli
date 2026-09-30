@@ -61,13 +61,17 @@ async function handleUri(uri: vscode.Uri): Promise<void> {
     const args = reviveCommandArgs(request.args);
     log(`Executing command: ${request.command}${args.length > 0 ? ` args=${JSON.stringify(request.args)}` : ''}`);
     const result = await vscode.commands.executeCommand(request.command, ...args);
-    if (request.reply) {
-      await sendReply(request.reply, {
+    const reply = request.reply;
+    if (reply) {
+      const commandReply: CommandReply = {
         version: 1,
-        requestId: request.reply.requestId,
-        ok: true,
-        result: serializeCommandResult(result)
-      });
+        requestId: reply.requestId,
+        ok: true
+      };
+      if (result !== undefined) {
+        commandReply.result = serializeCommandResult(result);
+      }
+      await sendReply(reply, commandReply);
     }
     log(`Command completed: ${request.command}`);
   } catch (error) {

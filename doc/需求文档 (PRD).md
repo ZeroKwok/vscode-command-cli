@@ -47,7 +47,7 @@ JSON 载荷：
 }
 ```
 
-扩展执行：
+扩展等待执行完成：
 
 ```typescript
 const result = await vscode.commands.executeCommand(command, ...args);
@@ -64,7 +64,27 @@ const result = await vscode.commands.executeCommand(command, ...args);
 }
 ```
 
-失败时返回 `ok: false` 和 `error`。客户端校验 URL 路径、随机 token、请求 ID 和协议版本，输出 JSON 后立即关闭监听器。
+失败时返回 `ok: false` 和 `error`。客户端校验 URL 路径、随机 token、请求 ID 和协议版本后关闭监听器。
+
+CLI 对用户输出时封装为两层。只有成功收到有效扩展回调时才包含 `vscode`：
+
+```json
+{
+  "cli": { "ok": true },
+  "vscode": { "ok": true, "result": {} }
+}
+```
+
+命令没有返回值时省略 `vscode.result`。如果 CLI 无法打开 URI、无法创建 callback 或等待超时，则只输出 `cli` 层错误：
+
+```json
+{
+  "cli": {
+    "ok": false,
+    "error": { "code": "timeout", "message": "Timed out after 15s." }
+  }
+}
+```
 
 ### 2.3 安全约束
 
@@ -80,8 +100,8 @@ code-cli [--wait] [--timeout 15s] [--uri-scheme vscode] <vscode.commandId> [arg.
 ```
 
 - 默认模式：打开 URI 后立即退出。
-- `--wait`：等待一次回调并将 JSON 写入 stdout；命令失败或超时返回非零退出码。
-- `--timeout`：仅在 `--wait` 下生效，默认 15 秒。
+- `--wait`：等待命令完成并输出分层 JSON 结果；不设置 `--timeout` 时无限等待。
+- `--timeout`：仅在 `--wait` 下生效；超时时只返回 CLI 层错误。
 - `--uri-scheme`：支持 Stable 的 `vscode` 与 Insiders 的 `vscode-insiders`。
 
 其他快捷脚本不应实现 JSON、Base64URL、操作系统 URL 调用或 HTTP 回调；它们只需调用 `code-cli`。
@@ -109,7 +129,7 @@ code-cli [--wait] [--timeout 15s] [--uri-scheme vscode] <vscode.commandId> [arg.
 
 1. `code-cli.exe workbench.action.showCommands` 在最前方 VS Code 窗口打开命令面板。
 2. 多窗口情况下，同一请求仅由最前方窗口处理。
-3. `--wait` 创建随机本地 callback，正确输出命令返回 JSON 并在完成后停止监听。
-4. 无效 token、错误路径、重复 callback 和超时均返回错误，不执行额外操作。
+3. `--wait` 创建随机本地 callback，在命令完成后输出 `cli` 与 `vscode` 分层 JSON，并停止监听。
+4. 无效 token、错误路径、重复 callback 和超时均返回 CLI 层错误，不执行额外操作。
 5. `code-git-open.sh` 等快捷脚本可复用同一个 `code-cli.exe`。
 6. `npm run compile`、`npm run lint`、`npm run build:client` 和 `npm run test:client` 全部通过。

@@ -16,6 +16,7 @@ func TestMakeURIEncodesRequest(t *testing.T) {
 		Version: 1,
 		Command: "myPlugin.handleMessage",
 		Args:    []string{"json:{\"message\":\"中文\"}"},
+		Reply:   &replyTarget{RequestID: "abcdefghijklmnop", Token: "abcdefghijklmnop", URL: "http://127.0.0.1:3000/v1/result/abcdefghijklmnop"},
 	})
 	if err != nil {
 		t.Fatalf("makeURI returned an error: %v", err)
@@ -38,7 +39,7 @@ func TestMakeURIEncodesRequest(t *testing.T) {
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		t.Fatalf("decode JSON payload: %v", err)
 	}
-	if decoded.Command != "myPlugin.handleMessage" || len(decoded.Args) != 1 || decoded.Args[0] != "json:{\"message\":\"中文\"}" {
+	if decoded.Command != "myPlugin.handleMessage" || len(decoded.Args) != 1 || decoded.Args[0] != "json:{\"message\":\"中文\"}" || decoded.Reply == nil {
 		t.Fatalf("unexpected decoded request: %#v", decoded)
 	}
 }
@@ -75,5 +76,30 @@ func TestCallbackServerAcceptsAuthorizedReply(t *testing.T) {
 	}
 	if !reply.OK || reply.RequestID != callback.reply.RequestID {
 		t.Fatalf("unexpected callback reply: %#v", reply)
+	}
+}
+
+func TestResultFromReplyPreservesFalseResult(t *testing.T) {
+	result, err := json.Marshal(resultFromReply(commandReply{
+		OK:     true,
+		Result: json.RawMessage(`false`),
+	}))
+	if err != nil {
+		t.Fatalf("marshal result envelope: %v", err)
+	}
+
+	if !strings.Contains(string(result), `"vscode":{"ok":true,"result":false}`) {
+		t.Fatalf("unexpected result envelope: %s", result)
+	}
+}
+
+func TestResultFromReplyDoesNotCreateVSCodeLayerForCLIFailure(t *testing.T) {
+	result, err := json.Marshal(cliFailure("timeout", "Timed out after 15s."))
+	if err != nil {
+		t.Fatalf("marshal CLI failure: %v", err)
+	}
+
+	if strings.Contains(string(result), `"vscode"`) {
+		t.Fatalf("CLI failure unexpectedly included a VS Code layer: %s", result)
 	}
 }
